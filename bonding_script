@@ -1,0 +1,11 @@
+#!/bin/bash
+
+sed -e 's/eth0/bond0/' /etc/sysconfig/network-scripts/ifcfg-eth0 > /etc/sysconfig/network-scripts/ifcfg-bond0
+perl -p -i -e 's/^HWADDR/#HWADDR/' /etc/sysconfig/network-scripts/ifcfg-bond0
+mv /etc/sysconfig/network-scripts/ifcfg-eth0 /etc/sysconfig/network-scripts/ifcfg-eth0.orig
+curl http://install.303net.pvt/bonding/bonding.conf > /etc/modprobe.d/bonding.conf
+curl http://install.303net.pvt/bonding/ifcfg-eth0 > /etc/sysconfig/network-scripts/ifcfg-eth0
+curl http://install.303net.pvt/bonding/ifcfg-eth1 > /etc/sysconfig/network-scripts/ifcfg-eth1
+
+service network restart
+
