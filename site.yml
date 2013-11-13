@@ -1,0 +1,256 @@
+---
+# Site Configuration
+# ==================
+
+- hosts: all
+  user: ansibler
+  sudo: true
+  roles:
+    - common
+    - postfix_mandrill
+    - ganglia_monitor
+
+- hosts: 2_links_aggregated
+  user: ansibler
+  sudo: true
+  roles:
+    - { role: 2_aggregated_links, when: "ansible_interfaces|length > 2 and ansible_interfaces|length < 4 and 'bond0' not in ansible_interfaces" }
+
+- hosts: monitors[0]
+  user: ansibler
+  sudo: true
+  roles:
+    - oracle_jdk
+    - ganglia_metad
+    - ganglia_web
+    - elasticsearch
+    - kibana3
+
+- hosts: all
+  user: ansibler
+  sudo: true
+  roles:
+    - td_agent
+    - rsyslog_fluentd
+
+# Hadoop
+
+- hosts: zookeepers:journalnodes:resourcemanager:nodemanagers:historyserver:hbase_masters:regionservers
+  user: ansibler
+  sudo: true
+  roles:
+    - oracle_jdk
+    - cdh_common
+
+- hosts: zookeepers
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_zookeeper_server
+
+- hosts: journalnodes:namenodes:datanodes
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_config
+
+- hosts: journalnodes
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_journalnode
+
+- hosts: namenodes[0]
+  user: ansibler
+  sudo: true
+  sudo_user: hdfs
+  tasks:
+    - name: Make sure the /data/dfs/nn directory exists
+      file: path=/data/dfs/nn owner=hdfs group=hdfs state=directory
+      tags:
+        - hadoop
+        - hbase
+    - name: Make sure the namenode is formatted - WILL NOT FORMAT IF /data/dfs/nn/current/VERSION EXISTS TO AVOID DATA LOSS
+      shell: creates=/data/dfs/nn/current/VERSION hdfs namenode -format -force
+      tags:
+        - hadoop
+        - hbase
+
+- hosts: namenodes[0]
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_namenode
+    - cdh_hadoop_zkfc
+
+- hosts: namenodes[1]
+  user: ansibler
+  sudo: true
+  sudo_user: hdfs
+  tasks:
+    - name: Make sure the first namenode is online
+      wait_for: host={{ hostvars[groups['namenodes'][0]]['ansible_default_ipv4']['address'] }} port=50070
+      tags:
+        - hadoop
+        - hbase
+    - name: Make sure the /data/dfs/nn directory exists
+      file: path=/data/dfs/nn owner=hdfs group=hdfs state=directory
+      tags:
+        - hadoop
+        - hbase
+    - name: Make sure the standby namenode is bootstrapped
+      shell: creates=/data/dfs/nn/.bootstrapped hdfs namenode -bootstrapStandby && touch /data/dfs/nn/.bootstrapped
+      tags:
+        - hadoop
+        - hbase
+
+- hosts: namenodes[1]
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_namenode
+    - cdh_hadoop_zkfc
+
+- hosts: namenodes[0]
+  user: ansibler
+  sudo: true
+  tasks:
+    - name: Make sure the hadoop-hdfs-zkfc is formatted
+      shell: creates=/data/dfs/.zkfsformatted hdfs zkfc -formatZK -force && touch /data/dfs/.zkfsformatted
+      tags:
+        - hadoop
+        - hbase
+    - name: start zkfc
+      service: name=hadoop-hdfs-zkfc state=restarted
+      tags:
+        - hadoop
+        - hbase
+    - name: restart namenode
+      service: name=hadoop-hdfs-namenode state=restarted
+      tags:
+        - hadoop
+        - hbase
+
+- hosts: datanodes
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_datanode
+
+- hosts: nodemanagers
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_mapreduce
+
+- hosts: hbase_masters:regionservers
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hbase_config
+
+- hosts: namenodes[0]
+  user: ansibler
+  sudo: true
+  sudo_user: hdfs
+  tasks:
+    - name: Make sure a /tmp directory exists on the cluster
+      shell: creates=/data/dfs/.tmpdircreated hadoop fs -mkdir /tmp && touch /data/dfs/.tmpdircreated
+      tags:
+        - hadoop
+    - name: Make sure the /tmp directory has the correct permissions
+      shell: creates=/data/dfs/.tmpdirchowned sleep 5 && hadoop fs -chmod -R 1777 /tmp && touch /data/dfs/.tmpdirchowned
+      tags:
+        - hadoop
+    - name: Make sure a /user/history directory exists on the cluster
+      shell: creates=/data/dfs/.historydircreated hadoop fs -mkdir /user/history && touch /data/dfs/.historydircreated
+      tags:
+        - hadoop
+    - name: Make sure the /user/history directory has the correct permissions
+      shell: creates=/data/dfs/.historydirchmodded sleep 5 && hadoop fs -chmod -R 1777 /user/history && touch /data/dfs/.historydirchmodded
+      tags:
+        - hadoop
+    - name: Make sure the /user/history directory has the correct owner
+      shell: creates=/data/dfs/.historydirchowned sleep 5 && hadoop fs -chown yarn /user/history && touch /data/dfs/.historydirchowned
+      tags:
+        - hadoop
+    - name: Make sure a /hbase directory exists on the cluster
+      shell: creates=/data/dfs/.hbasedircreated hadoop fs -mkdir /hbase && touch /data/dfs/.hbasedircreated
+      tags:
+        - hadoop
+        - hbase
+    - name: Make sure the /hbase directory has the correct owner
+      shell: creates=/data/dfs/.hbasedirchowned sleep 5 && hadoop fs -chown hbase:hbase /hbase && touch /data/dfs/.hbasedirchowned
+      tags:
+        - hadoop
+        - hbase
+
+- hosts: resourcemanager
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_yarn_resourcemanager
+
+- hosts: nodemanagers
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_yarn_nodemanager
+
+- hosts: historyserver
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hadoop_mapreduce_historyserver
+    - cdh_hadoop_yarn_proxyserver
+
+- hosts: hbase_masters
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hbase_master
+
+- hosts: regionservers
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hbase_regionserver
+
+- hosts: hive_metastore
+  user: ansibler
+  sudo: true
+  roles:
+    - postgresql_server
+    - cdh_hive_config
+
+- hosts: hive_metastore
+  user: ansibler
+  sudo: true
+  sudo_user: postgres
+  tasks:
+    - postgresql_user: user=hiveuser password=hive_{{ site_name }}
+      tags: hive
+    - postgresql_db: name=metastore
+      tags: hive
+    - shell: psql --dbname=metastore --file=/usr/lib/hive/scripts/metastore/upgrade/postgres/hive-schema-0.10.0.postgres.sql
+      tags: hive
+    - shell: psql --command="GRANT ALL PRIVILEGES ON DATABASE metastore TO hiveuser;"
+      tags: hive
+
+- hosts: hive_metastore
+  user: ansibler
+  sudo: true
+  roles:
+    - cdh_hive_metastore
+
+- hosts: presto_coordinators
+  user: ansibler
+  sudo: true
+  roles:
+    - presto_coordinator
+
+- hosts: presto_workers
+  user: ansibler
+  sudo: true
+  roles:
+    - presto_worker
